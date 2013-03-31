@@ -19,7 +19,7 @@ namespace FuelBalancer
         [KSPField]
         public float maxFlowRate = 100.0f;
 
-        [KSPField(isPersistant = true, guiActive = true, guiName = "Balance Module")]
+        [KSPField(isPersistant = true)]
         private bool m_activated = false;
 
         private void BindFuelLine()
@@ -53,26 +53,40 @@ namespace FuelBalancer
             m_activated = false;
         }
 
-        [KSPEvent(name = "ContextMenuActivateBalancer", active = true, guiActive = true, guiName = "Enable Balancer")]
+        [KSPEvent(name = "ContextMenuActivateBalancer", active = true, guiActive = true, guiName = "Enable Balancer", category = "Fuel Balancing")]
         public void ContextMenuActivateBalancer()
         {
             m_activated = true;
             BindFuelLine();
             CheckActivated();
+
+            if (m_activated)
+            {
+                Events["ContextMenuActivateBalancer"].active = false;
+                Events["ContextMenuDeactivateBalancer"].active = true;
+            }
+            else
+            {
+                Events["ContextMenuActivateBalancer"].active = true;
+                Events["ContextMenuDeactivateBalancer"].active = false;
+            }
         }
-        [KSPEvent(name = "ContextMenuDeactivateBalancer", active = false, guiActive = true, guiName = "Disable Balancer")]
+        [KSPEvent(name = "ContextMenuDeactivateBalancer", active = false, guiActive = true, guiName = "Disable Balancer", category = "Fuel Balancing")]
         public void ContextMenuDeactivateBalancer()
         {
             m_activated = false;
+
+            Events["ContextMenuActivateBalancer"].active = true;
+            Events["ContextMenuDeactivateBalancer"].active = false;
         }
 
         [KSPAction("Activate Balancer", actionGroup = KSPActionGroup.None)]
-        public void ActionGroupActivateBalancer()
+        public void ActionGroupActivateBalancer(KSPActionParam param)
         {
             ContextMenuActivateBalancer();
         }
         [KSPAction("Deactivate Balancer", actionGroup = KSPActionGroup.None)]
-        public void ActionGroupDeactivateBalancer()
+        public void ActionGroupDeactivateBalancer(KSPActionParam param)
         {
             ContextMenuDeactivateBalancer();
         }
@@ -82,78 +96,65 @@ namespace FuelBalancer
             base.OnStart(state);
 
             m_startState = state;
-            this.Events["ContextMenuActivateBalancer"].guiName = "Enable " + resourceName + " Balancer";
-            this.Events["ContextMenuDeactivateBalancer"].guiName = "Disable " + resourceName + " Balancer";
+            Events["ContextMenuActivateBalancer"].guiName = "Enable " + resourceName + " Balancer";
+            Events["ContextMenuDeactivateBalancer"].guiName = "Disable " + resourceName + " Balancer";
         }
 
         public override void OnUpdate()
         {
-            Debug.Log("OnFixedUpdate(): " + m_startState.ToString());
-            if (m_startState == StartState.Editor) return;
-
-            BindFuelLine();
-            CheckActivated();
-
-            Debug.Log("Activated: " + m_activated.ToString());
-            if (m_activated)
+            if (m_startState != StartState.Editor)
             {
-                this.Events["ContextMenuActivateBalancer"].active = false;
-                this.Events["ContextMenuDeactivateBalancer"].active = true;
-                double srcAmount = m_sourceTank.Resources[resourceName].amount;
-                double srcMaxAmount = m_sourceTank.Resources[resourceName].maxAmount;
-                double tgtAmount = m_targetTank.Resources[resourceName].amount;
-                double tgtMaxAmount = m_targetTank.Resources[resourceName].maxAmount;
+                BindFuelLine();
+                CheckActivated();
 
-                double tgtRatio = tgtAmount / tgtMaxAmount;
-                double srcRatio = srcAmount / srcMaxAmount;
-
-                double desiredRatio = (srcAmount + tgtAmount) / (srcMaxAmount + tgtMaxAmount);
-
-                Debug.Log(srcRatio.ToString() + " " + desiredRatio.ToString() + " " + tgtRatio.ToString());
-
-                if (tgtRatio > srcRatio)
+                if (m_activated)
                 {
-                    // tgtRatio > desiredRatio > srcRatio
-                    // Direction: src <- tgt
-                    double tgtAmountToTransfer = (tgtRatio - desiredRatio) * tgtMaxAmount;
-                    if (tgtAmountToTransfer > maxFlowRate * Time.fixedDeltaTime)
+                    double srcAmount = m_sourceTank.Resources[resourceName].amount;
+                    double srcMaxAmount = m_sourceTank.Resources[resourceName].maxAmount;
+                    double tgtAmount = m_targetTank.Resources[resourceName].amount;
+                    double tgtMaxAmount = m_targetTank.Resources[resourceName].maxAmount;
+
+                    double tgtRatio = tgtAmount / tgtMaxAmount;
+                    double srcRatio = srcAmount / srcMaxAmount;
+
+                    double desiredRatio = (srcAmount + tgtAmount) / (srcMaxAmount + tgtMaxAmount);
+
+                    Debug.Log(srcRatio.ToString() + " " + desiredRatio.ToString() + " " + tgtRatio.ToString());
+
+                    if (tgtRatio > srcRatio)
                     {
-                        m_sourceTank.Resources[resourceName].amount += maxFlowRate * Time.fixedDeltaTime;
-                        m_targetTank.Resources[resourceName].amount -= maxFlowRate * Time.fixedDeltaTime;
-                        Debug.Log("Transferred: " + (maxFlowRate * Time.fixedDeltaTime).ToString());
+                        // tgtRatio > desiredRatio > srcRatio
+                        // Direction: src <- tgt
+                        double tgtAmountToTransfer = (tgtRatio - desiredRatio) * tgtMaxAmount;
+                        if (tgtAmountToTransfer > maxFlowRate * Time.fixedDeltaTime)
+                        {
+                            m_sourceTank.Resources[resourceName].amount += maxFlowRate * Time.fixedDeltaTime;
+                            m_targetTank.Resources[resourceName].amount -= maxFlowRate * Time.fixedDeltaTime;
+                        }
+                        else
+                        {
+                            m_sourceTank.Resources[resourceName].amount += tgtAmountToTransfer;
+                            m_targetTank.Resources[resourceName].amount -= tgtAmountToTransfer;
+                        }
                     }
-                    else
+                    else if (srcRatio > tgtRatio)
                     {
-                        m_sourceTank.Resources[resourceName].amount += tgtAmountToTransfer;
-                        m_targetTank.Resources[resourceName].amount -= tgtAmountToTransfer;
-                        Debug.Log("Transferred: " + (tgtAmountToTransfer).ToString());
-                    }
-                }
-                else if (srcRatio > tgtRatio)
-                {
-                    // srcRatio > desiredRatio > tgtRatio
-                    // Direction: tgt <- src
-                    double srcAmountToTransfer = (srcRatio - desiredRatio) * srcMaxAmount;
-                    if (srcAmountToTransfer > maxFlowRate * Time.fixedDeltaTime)
-                    {
-                        m_targetTank.Resources[resourceName].amount += maxFlowRate * Time.fixedDeltaTime;
-                        m_sourceTank.Resources[resourceName].amount -= maxFlowRate * Time.fixedDeltaTime;
-                        Debug.Log("Transferred: " + (maxFlowRate * Time.fixedDeltaTime).ToString());
-                    }
-                    else
-                    {
-                        m_targetTank.Resources[resourceName].amount += srcAmountToTransfer;
-                        m_sourceTank.Resources[resourceName].amount -= srcAmountToTransfer;
-                        Debug.Log("Transferred: " + (srcAmountToTransfer).ToString());
+                        // srcRatio > desiredRatio > tgtRatio
+                        // Direction: tgt <- src
+                        double srcAmountToTransfer = (srcRatio - desiredRatio) * srcMaxAmount;
+                        if (srcAmountToTransfer > maxFlowRate * Time.fixedDeltaTime)
+                        {
+                            m_targetTank.Resources[resourceName].amount += maxFlowRate * Time.fixedDeltaTime;
+                            m_sourceTank.Resources[resourceName].amount -= maxFlowRate * Time.fixedDeltaTime;
+                        }
+                        else
+                        {
+                            m_targetTank.Resources[resourceName].amount += srcAmountToTransfer;
+                            m_sourceTank.Resources[resourceName].amount -= srcAmountToTransfer;
+                        }
                     }
                 }
             }
-            else
-            {
-                this.Events["ContextMenuActivateBalancer"].active = true;
-                this.Events["ContextMenuDeactivateBalancer"].active = false;
-            }
-
             base.OnUpdate();
         }
     }
